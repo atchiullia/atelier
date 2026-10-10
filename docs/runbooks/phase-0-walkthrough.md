@@ -45,7 +45,7 @@ git --version && python3 --version
 mkdir -p ~/ebahn-project/dev/atelier && cd ~/ebahn-project/dev/atelier
 ```
 
-Download the files from this chat into `~/Downloads/atelier-phase0/`, keeping their folder structure: the `atelier/` tree, the `atelier-env-fuhro/` tree and `SPEC.md`.
+Download `atelier-phase0.zip` from this chat and unzip it (double-click it in Finder, or `cd ~/Downloads && unzip atelier-phase0.zip`). Check with `ls ~/Downloads/atelier-phase0`: you should see `atelier`, `atelier-env-fuhro` and `SPEC.md`. Files sent one by one arrive flat, without folders, which is why the zip is used.
 
 **You should see:** `gh auth status` says you are logged in as `atchiullia`.
 
@@ -87,10 +87,17 @@ ssh-add --apple-use-keychain ~/.ssh/id_ed25519_signing
 git config --global gpg.format ssh
 git config --global user.signingkey ~/.ssh/id_ed25519_signing.pub
 git config --global commit.gpgsign true
+ls ~/.ssh/id_ed25519_signing.pub         # must exist: git reads this exact file when it signs
+echo "giullialazaro@gmail.com $(cat ~/.ssh/id_ed25519_signing.pub)" > ~/.ssh/allowed_signers
+git config --global gpg.ssh.allowedSignersFile ~/.ssh/allowed_signers
 cat ~/.ssh/id_ed25519_signing.pub        # public key: safe to show
 ```
 
+The `allowed_signers` lines let your own Mac verify signatures (`git log --show-signature`). Use the email you set in `git config user.email`.
+
 github.com → **Settings** → **SSH and GPG keys** → **New SSH key** → Key type **Signing Key** → paste the public key → **Add SSH key**.
+
+**If not:** `error: Couldn't load public key ...: No such file or directory` then `fatal: failed to write commit object` means git is set to sign with a key file that does not exist (usually a path typo, or the `ssh-keygen` line was skipped). Run `ls ~/.ssh/*.pub`, then either create the key with the first command above or point git at the real one: `git config --global user.signingkey ~/.ssh/REAL_NAME.pub`. No commit is made when this happens, so nothing is lost: fix it and commit again.
 
 ### 2c. Settings on the `atelier` repo
 
@@ -113,7 +120,7 @@ Open github.com/atchiullia/atelier → **Settings**.
 
 **Say this:** "The leak guard needs to know what to look for: my internal names, addresses and IDs. A small tool finds most of them and writes them straight into the private repo. It prints counts only."
 
-**Do:**
+**Do, on your Mac first:**
 
 ```bash
 cd ~/ebahn-project/dev/atelier/atelier-env-fuhro
@@ -122,16 +129,64 @@ cp ~/Downloads/atelier-phase0/atelier-env-fuhro/tools/collect-patterns.py tools/
 cp ~/Downloads/atelier-phase0/atelier-env-fuhro/leak-patterns/README.md  leak-patterns/
 ```
 
-Run it on a machine that is on your home network and has `kubectl` access to the Pi (the Pi itself, or your Mac if kubectl works from there). Check the context first, then run:
+Run the collector on a machine whose `kubectl` points at the **real cluster**. **Which machine matters.** The `~/ebahn-project/...` folders and the downloaded files exist only on your Mac, and your Mac's `kubectl` usually points at a local test cluster (`docker-desktop`, `minikube`), which is the wrong one. Check on the Mac:
 
 ```bash
+kubectl config get-contexts -o name
+```
+
+If a context for the real cluster is listed, run `kubectl config use-context NAME` and run the collector on the Mac (from the `atelier-env-fuhro` folder): `python3 tools/collect-patterns.py leak-patterns --local`. Done; skip to the prompts below.
+
+If only local contexts are listed, use the machine where `kubectl config current-context` shows the real cluster (here, the control plane) as a temporary workbench. The label before each block says where to type it. This route needs no hostname and no `scp`; it uses copy and paste.
+
+**On your Mac:** put the script on the clipboard.
+
+```bash
+pbcopy < ~/ebahn-project/dev/atelier/atelier-env-fuhro/tools/collect-patterns.py
+```
+
+**On the control plane:** make a throwaway folder and paste the script into it.
+
+```bash
+mkdir -p ~/collect/tools ~/collect/leak-patterns
+nano ~/collect/tools/collect-patterns.py
+```
+
+Paste (Cmd+V), then save with Ctrl+O, Enter, Ctrl+X. Check with `wc -l ~/collect/tools/collect-patterns.py`: a few hundred lines, not 0.
+
+**On the control plane:** run it.
+
+```bash
+cd ~/collect
 kubectl config current-context           # look at it, do not read it out loud
 python3 tools/collect-patterns.py leak-patterns --local
 ```
 
-The tool asks two questions (type `private`, then `fuhro`). It then prints something like `IP 3`, `CIDR 4`, `HOST 6`: **counts only**.
+**Bring the results home** (screen not shared or recorded). For each of `patterns.txt`, `suggestions.txt`, `manual.txt` and `allow.txt`: on the control plane run `cat ~/collect/leak-patterns/FILE` and copy the output, then on your Mac:
 
-If `kubectl` only works on the Pi, copy the script there with `scp`, run it, `scp -r` the `leak-patterns/` folder back, then delete the copies on the Pi.
+```bash
+cd ~/ebahn-project/dev/atelier/atelier-env-fuhro/leak-patterns
+pbpaste > FILE
+```
+
+When all four are done:
+
+```bash
+chmod 600 *.txt
+ls -l
+```
+
+If you can ssh from the Mac to that machine, `scp -r USER@HOST:~/collect/leak-patterns/. .` does the same in one go. Use whatever address you already use for `ssh`; a bare machine name often does not resolve from the Mac, but its IP address usually works.
+
+Only when `ls -l` shows the four files with sensible sizes, **on the control plane:** delete the copies.
+
+```bash
+rm -rf ~/collect
+```
+
+The tool asks two questions (type `private`, then `fuhro`). It then prints something like `IP 3`, `CIDR 4`, `HOST 6`: **counts only**. Note that `--local` also records details of the machine it runs on, so run it on the machine whose names you want in the gate.
+
+**If not:** `cd: No such file or directory` on the cluster machine means you pasted a Mac path there; it has no `~/ebahn-project` folder, so use the `~/collect` steps above. `cp: cannot stat ... Downloads` means the same: that command belongs on the Mac. `Could not resolve hostname` from `scp` means the Mac does not know that machine's name; use the copy-and-paste route. `kubectl` showing `docker-desktop` or `minikube` means you are on the wrong cluster.
 
 Now open the folder **in your editor with the camera off**, not in a shared terminal:
 
@@ -144,16 +199,25 @@ Now open the folder **in your editor with the camera off**, not in a shared term
 printf 'CANARY\tzz-canary-%s\n' "$(openssl rand -hex 4)" >> leak-patterns/manual.txt
 ```
 
-5. Commit to the private repo:
+5. Commit to the private repo. **Go to the repo root first** (the folder that contains `tools/` and `leak-patterns/`, not inside `leak-patterns/`), so the paths in the commands and the commit are right:
+
+```bash
+cd ~/ebahn-project/dev/atelier/atelier-env-fuhro
+gh repo view atchiullia/atelier-env-fuhro --json visibility -q .visibility     # must print PRIVATE
+git status --short                       # expect only tools/ and leak-patterns/ files
+```
+
+If `git status` also lists an `allow.txt` in the repo root (not inside `leak-patterns/`), it is a stray copy. Check it with `diff allow.txt leak-patterns/allow.txt`, then delete it with `rm allow.txt` before committing. Only if it is already committed: `git rm allow.txt`, then commit.
 
 ```bash
 git add -A
 git commit -m "Add leak-pattern tooling and first pattern list"
 git push
-git diff --stat HEAD~1                   # use --stat on camera, never the full diff
+git log --show-signature -1 | head -3    # expect: Good "git" signature
+git diff --stat HEAD~1                   # HEAD~1 with a tilde; use --stat on camera, never the full diff
 ```
 
-**You should see:** a short summary of counts, four files in `leak-patterns/`, and a successful push.
+**You should see:** a short summary of counts, four files in `leak-patterns/` (plus `README.md`), a successful push, and a good signature line. On github.com the commit shows a **Verified** badge once the signing key is added.
 
 **If not:** "nothing collected" means `kubectl` points at the wrong cluster or cannot connect. Fix the context, run again.
 
@@ -163,8 +227,11 @@ git diff --stat HEAD~1                   # use --stat on camera, never the full 
 
 ### 4a. Copy the files into the public repo
 
+Two folders are both called `atelier`: the outer one holds the three repos, the inner one is the public repo (it has `.git`). Your prompt shows only `atelier` in both. Always check with `pwd` before repo commands; it must end in `/dev/atelier/atelier`.
+
 ```bash
 cd ~/ebahn-project/dev/atelier/atelier
+pwd
 cp -R ~/Downloads/atelier-phase0/atelier/. .
 cp ~/Downloads/atelier-phase0/SPEC.md .
 ls -a
@@ -172,9 +239,12 @@ ls -a
 
 You should now have `tools/leakcheck/`, `.github/workflows/leak-gate.yml`, `.pre-commit-config.yaml`, `docs/adr/`, `docs/runbooks/` and the starter files. The `LICENSE` that GitHub created stays as it is.
 
+This is a first-time copy. Later updates use the safer procedure in the appendix at the end, because a plain copy overwrites files you have changed since (for example the gitleaks version that `pre-commit autoupdate` pins).
+
 ### 4b. Install the hooks and run the tests
 
 ```bash
+brew install pre-commit gitleaks     # skip if `which pre-commit gitleaks` already finds both
 pre-commit autoupdate                    # pins gitleaks to the current release
 pre-commit install
 python3 -m unittest discover -s tools/leakcheck -v
@@ -186,16 +256,37 @@ Now tell your shell where the private patterns are, so Tier 2 also runs locally:
 ```bash
 echo 'export ATELIER_LEAK_PATTERNS="$HOME/ebahn-project/dev/atelier/atelier-env-fuhro/leak-patterns"' >> ~/.zshrc
 source ~/.zshrc
-python3 tools/leakcheck/leakcheck.py     # Tier 1 + Tier 2
+python3 tools/leakcheck/leakcheck.py --require-patterns     # Tier 1 + Tier 2
 ```
 
-**You should see:** `OK` from the tests, and `0 finding(s)` from both runs.
+Run the `echo ... >> ~/.zshrc` line only once; `grep -n ATELIER_LEAK_PATTERNS ~/.zshrc` should show one line. `can't open file '.../dev/atelier/tools/...'` means you are in the outer folder: `cd` one level down.
+
+**You should see:** `OK` from the tests, and `0 finding(s)` from both runs, with no "tier 2 skipped" line.
 
 **If not:** each `LEAK <category> <file>:<line>` line needs a decision. Open that line and choose one:
 
 - It is a real leak: remove it.
 - It is a public fact (for example a public hostname): add a regex for it to `allow.txt` in the **private** repo.
 - It is documentation that must mention something on purpose: add `leak-ok: <reason>` on the same line.
+
+**A finding on plain text (for example the README or the `LICENSE`) is a false positive from an over-broad pattern.** Never silence it with `leak-ok:`. Find the pattern lines that match, without printing them (zsh-safe; run with the camera off):
+
+```bash
+cd ~/ebahn-project/dev/atelier/atelier
+check() {
+  sed -n "${2}p" "$1" > /tmp/l.txt
+  for f in patterns manual; do
+    awk -F'\t' '!/^#/ && NF>=2 {print NR"\t"$2}' "$ATELIER_LEAK_PATTERNS/$f.txt" |
+    while IFS=$'\t' read -r n rx; do
+      grep -qiE -- "$rx" /tmp/l.txt && echo "$1:$2 <- $f.txt line $n"
+    done
+  done
+}
+check README.md 3          # one call per finding: FILE LINE
+rm -f /tmp/l.txt
+```
+
+Then open those lines in `patterns.txt` in your editor. Typical culprits: a bare common word (`kubernetes`, a default context name), a very short value, or a blank or punctuation-only host value that matches `.` or `).`. Delete the line, or make it match only the whole name. Re-run the check until it says `0 finding(s)`, then commit and push the change **from the private repo root** (`cd ~/ebahn-project/dev/atelier/atelier-env-fuhro`), because CI reads the patterns from there. Running the collector again regenerates `patterns.txt`, so redo this review after any new collection.
 
 ### 4c. Give GitHub read access to the pattern list
 
@@ -222,7 +313,7 @@ git push -u origin main
 gh run watch
 ```
 
-**You should see:** the `leak-gate` workflow turn green with two jobs, `gitleaks` and `leakcheck`.
+**You should see:** the `leak-gate` workflow turn green with two jobs, `gitleaks` and `leakcheck`. Check with `gh run list --branch main --limit 3`. The workflow pins `runs-on: ubuntu-24.04`, because `ubuntu-latest` moves to Ubuntu 26 on 2026-10-19 and could change tool versions under the gate. Warnings about Node.js 20 are only warnings.
 
 ### 4e. Prove the gate works (the part viewers love)
 
@@ -248,7 +339,15 @@ git push -u origin test/leak-gate
 gh run watch
 ```
 
-**You should see (CI):** both jobs fail. In the `leakcheck` log you see `LEAK CANARY canary.txt:1` and nothing else about the content.
+**You should see (CI):** both jobs fail. In the `leakcheck` log you see `LEAK CANARY canary.txt:1` and nothing else about the content. A new run can take a few seconds to appear, so `gh run watch` right after the push may say "found no in progress runs". Use:
+
+```bash
+gh run list --branch test/leak-gate --limit 5
+gh run view RUN_ID                                   # which step failed
+gh run view RUN_ID --log-failed | grep -E "LEAK|leakcheck:|Finding|RuleID" | head
+```
+
+For the test to count, the failing step must be **"Tier 2, private patterns"** (not "Fetch private patterns") with `LEAK CANARY canary.txt:1`, and the gitleaks job must say "Leaks detected". If "Fetch private patterns" fails instead, `PATTERNS_TOKEN` is wrong or missing: check `gh secret list --repo atchiullia/atelier` and the token's Contents read access to `atelier-env-fuhro`. The gate fails closed in that case, but the canary is not proven yet.
 
 Clean up:
 
@@ -267,13 +366,13 @@ GitHub may keep the test commits around for a while. That is why the test uses m
 
 **Say this:** "An ADR is a short note that says what I decided and why. Six months from now, or in an interview, this is how I remember my reasoning."
 
-Already in the repo from Step 4: 0001 (monorepo), 0002 (two regions), 0011 (open source, guest tenant), 0014 (separate tunnel, with its two amendments) and 0016 (the leak gate).
+Already in the repo from Step 4: 0001 (monorepo), 0002 (two regions), 0011 (open source, guest tenant), 0014 (separate tunnel, with its two amendments: Origin CA certificate on the last hop, and CI-only previews) and 0016 (the leak gate). All five are marked **Accepted** (2026-10-10).
 
 **Do:**
 
 1. Read each one. For every ADR, say out loud: what was the decision, what was the best alternative, and why did it lose?
 2. Edit anything that does not match what you actually think. These are your decisions.
-3. In ADR-0014 and ADR-0016, change **Proposed** to **Accepted** once you agree, and update the status in `SPEC.md` section 14.
+3. Check that each ADR says **Accepted** and that `SPEC.md` section 14 agrees. If you change your mind about one, set it back to **Proposed** and say why in the ADR.
 
 ```bash
 git checkout -b adr-review
@@ -290,6 +389,8 @@ gh pr merge --squash --delete-branch
 ## Step 6: The money alarm in Azure (2 h)
 
 **Say this:** "A budget in Azure is an alarm, not a brake. It tells me when spending crosses a line; it does not stop anything. The brake comes later, as automation."
+
+> **Free Azure account (what happened in practice).** A free account comes with a built-in **spending limit** (USD 200 of credit): when it is reached, deployed resources are removed from production and VMs are stopped, so on a free account the brake already exists. The budget, the action group's test email and the budget alerts did not work for me on the free account, and Microsoft's budget documentation does not list free accounts as a supported case. So on a free account, Step 6 means: confirm the account type, confirm the spending-limit banner in **Cost Management + Billing**, and record the tenant and subscription IDs in `manual.txt`. Create the budget and the action group (6b and 6c below) at the start of Phase 5, after upgrading to pay-as-you-go. Upgrading **removes the spending limit**, so from that moment the budget alarm and the teardown automation are the only controls. Do not create a paid resource before they exist.
 
 ### 6a. Subscription
 
@@ -366,7 +467,23 @@ gh repo edit atchiullia/atelier --visibility public --accept-visibility-change-c
    - Leave the bypass list empty.
 2. **Settings** → **Code security** → **Private vulnerability reporting** → **Enable**.
 3. Re-check **Settings → General → Features** (pull requests restricted) and **Settings → Actions → General** (approval for all external contributors).
-4. Repo page: add a short description and topics (`kubernetes`, `platform-engineering`, `ecommerce`, `gitops`).
+4. Repo page: add a short description and topics. This works while the repo is still private, so it can be done earlier.
+
+```bash
+gh repo edit atchiullia/atelier \
+  --description "Production-style fashion e-commerce platform and Kubernetes platform-engineering portfolio: GitOps, Cilium, SLOs, Black Friday game days." \
+  --add-topic kubernetes \
+  --add-topic platform-engineering \
+  --add-topic ecommerce \
+  --add-topic gitops \
+  --add-topic cilium \
+  --add-topic golang \
+  --add-topic azure \
+  --add-topic observability
+gh repo view atchiullia/atelier --json description,repositoryTopics -q '.description, [.repositoryTopics[].name]'
+```
+
+The description must not name any homelab detail; it matches the README's public wording. Leave `--homepage` for Phase 3, when the storefront exists: `ebahn.fuhro.network` is only up during showcases, so an earlier link would often be dead.
 
 ### 7e. The stranger test (this is the exit criterion)
 
@@ -388,9 +505,75 @@ Open the repo page in a private window where you are signed out, or sign in with
 4. What I learned: public CI logs are public, so the guard must never print what it finds; and a gate that quietly loads nothing is worse than no gate, so mine fails closed.
 5. Next: Phase 1, running the platform as an isolated guest on my Pi.
 
+**Saved version:** `docs/writeups/phase-0.md` in the public repo. The CV bullet is kept in the project notes, not in the repo.
+
 **CV bullet** (codes SEC, DOC, CICD):
 
-> Designed an open-source repo security model for a Kubernetes platform: public/private repository split, a custom fail-closed leak scanner with redacted output in pre-commit and CI alongside gitleaks, a closed-contribution GitHub policy, and an Azure budget alarm; verified with canary tests.
+> Designed an open-source repo security model for a Kubernetes platform: public/private repository split, a custom fail-closed leak scanner with redacted output in pre-commit and CI alongside gitleaks, a closed-contribution GitHub policy with signed commits and required checks, and ADR-documented isolation of a public demo from a private homelab (own Cloudflare tunnel, Origin CA TLS); verified with canary tests.
+
+## Appendix: bring updated files from this chat into the repo
+
+Use this whenever files in this chat change after your first copy (new ADR text, a new write-up, a fixed walkthrough). Files travel in a zip, so nothing reaches the repo until you copy it in and commit it. If `git commit` says `nothing to commit, working tree clean`, the copy did not happen: a pull request opened from that branch fails with `could not find any commits between origin/main and <branch>`.
+
+**1. Check where you are**
+
+```bash
+cd ~/ebahn-project/dev/atelier/atelier
+pwd                                  # must end in /dev/atelier/atelier
+git status --short                   # should be empty before you start
+git checkout -b docs/short-name      # use `git checkout docs/short-name` if the branch already exists
+```
+
+**2. Copy the zip over the repo**
+
+```bash
+rm -rf /tmp/atelier-update && mkdir /tmp/atelier-update
+unzip -q ~/Downloads/atelier-public-repo-update.zip -d /tmp/atelier-update
+rsync -a /tmp/atelier-update/atelier/ ./
+rm -rf /tmp/atelier-update
+```
+
+The slash after `atelier/` matters. Without it, rsync copies the folder itself and you get `atelier/atelier/` inside the repo; `git status` then shows only `?? atelier/` and `git diff` is empty. If that happens, run `rm -rf ./atelier` (it is untracked, so git is unaffected) and repeat.
+
+**3. Read the diff before committing**
+
+```bash
+git status --short
+git diff --stat
+```
+
+You should see only the files that were meant to change. A file you did not expect, or one that is marked modified when you never edited it in this chat, means the zip overwrote a local change. Look at it with `git diff <file>`. The usual case is `.pre-commit-config.yaml`: the zip carries the older gitleaks pin, while your repo has the newer one from `pre-commit autoupdate`. Keep yours:
+
+```bash
+git checkout -- .pre-commit-config.yaml
+```
+
+A stray `allow.txt` (or any other file in the repo root that is not in the repo layout) is left out of the commit.
+
+**4. Run the gate, commit, open the pull request**
+
+```bash
+python3 tools/leakcheck/leakcheck.py --require-patterns     # must print "0 finding(s)"
+git add -A
+git commit -m "Short message in the imperative"
+git push -u origin docs/short-name
+gh pr create --fill
+gh run list --branch docs/short-name --limit 3
+```
+
+**5. Merge when green, then clean up**
+
+```bash
+gh pr merge --squash --delete-branch
+git checkout main && git pull
+gh run list --branch main --limit 3          # the run on main must be green too
+```
+
+Old test branches can go: `git push origin --delete test/leak-gate`.
+
+**You should see:** both `gitleaks` and `leakcheck` green on the pull request and on `main`, and the commit marked Verified.
+
+**If not:** red `leakcheck` in CI shows only category and file:line. Use `gh run view <id> --log-failed | grep -E "LEAK|Leaks|error"`. If it flags a file you did not touch, the private pattern list matched a generic word; fix it in `atelier-env-fuhro` (see Step 4e), not in the public repo.
 
 ## Phase 0 is done when
 
@@ -398,7 +581,7 @@ Open the repo page in a private window where you are signed out, or sign in with
 - [ ] A stranger cannot open a pull request (Step 7e).
 - [ ] The canary commit is blocked locally and in CI, and the log never shows its text.
 - [ ] A made-up token is caught by gitleaks.
-- [ ] The Azure test email arrived and the $40 budget exists.
+- [ ] Azure: on a pay-as-you-go subscription, the test email arrived and the $40 budget exists. On a free account, the spending limit is confirmed and the budget is a hard gate at the start of Phase 5 (SPEC v0.13).
 - [ ] ADRs reviewed and accepted; `SPEC.md` status updated.
 - [ ] Write-up and CV bullet saved.
 

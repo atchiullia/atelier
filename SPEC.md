@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Status | `DRAFT v0.8` — Phase 0 artefacts written (walkthrough, leakcheck, ADRs); v1.0 pending Q3, Q10 and approval of ADR-014 amendments / ADR-016 (§15) |
+| Status | `DRAFT v0.13` — **Phase 0 complete** (2026-10-10); all ADRs 001–016 accepted; Azure budget alarm deferred to a hard gate at the start of Phase 5 (free account); v1.0 pending Q3 (Pi inventory, Phase 1 week 1) (§15) |
 | License | Code **Apache-2.0**; docs **CC BY 4.0**; brand assets & real catalog **all rights reserved, never in the public repo** (§16) |
 | Owner | Giullia Lazaro (`atchiullia`) |
 | Mentor/pair | Claude (senior platform architect role) |
@@ -259,7 +259,7 @@ atelier-env-fuhro/
 - Image promotion by digest via CI PR to the overlay (no `latest`).
 - **Argo Rollouts** canary (10 % → 50 % → 100 %) with AnalysisTemplates on Prometheus: error rate < 1 %, p95 < SLO; auto-rollback.
 - CI (GitHub Actions): lint/test → multi-arch build (buildx) → Trivy/Grype scan → syft SBOM → cosign sign (keyless, OIDC) → push GHCR → PR to overlay. Terraform: `fmt`/`validate`/`tflint`/`checkov` + `plan` on PR, `apply` on merge with OIDC federation to Azure (no static secrets).
-- Preview environments: **none on the homelab** (ADR-014 Amendment 2). Each pull request gets an ephemeral `kind` cluster inside GitHub Actions (same path as `atelierctl bootstrap kind`) running smoke tests and the k6 smoke scenario, destroyed with the runner. The homelab only runs signed release tags.
+- Preview environments: **none on the homelab** (ADR-014 Amendment 2). Each pull request gets an ephemeral `kind` cluster inside GitHub Actions (same path as `atelierctl bootstrap kind`) running smoke tests and the k6 smoke scenario, destroyed with the runner; the job gets no secrets and a read-only token. Click-through before merge is a local `kind` run. The homelab only runs signed release tags.
 
 ### 7.2 Networking (first-class)
 
@@ -268,7 +268,7 @@ atelier-env-fuhro/
 | CNI | Cilium, kube-proxy replacement, Hubble UI | Cilium (BYO CNI on AKS) | eBPF datapath vs iptables; conntrack under load |
 | L7 | Gateway API (`GatewayClass` cilium), HTTPRoute per service, rate limiting, timeouts, retries | same + Front Door origin | L4 LB → Gateway → Service → Pod hops |
 | DNS | **No external-dns on edge**: Cloudflare API tokens are zone-scoped, and the zone `fuhro.network` is shared, so a token for Atelier would be able to rewrite fuhro records. The `ebahn` CNAME → tunnel is created once from the private repo. CoreDNS tuning (NodeLocal DNSCache) | external-dns → Azure DNS (own zone, e.g. `core.ebahn.<brand-domain>` once a brand domain exists); private DNS zones | Blast radius of API tokens; DNS failure modes, ndots, negative caching |
-| TLS | **Cloudflare edge certificate** terminates public TLS; Cloudflare→`cloudflared` is encrypted by the tunnel; `cloudflared`→`atelier-gw` is plain HTTP inside the single node. No ACME issuer and no DNS token on the tenant (ADR-014 Amendment 1) | cert-manager DNS-01 against Azure DNS via workload identity; Front Door managed certs when used | Where TLS terminates and who can read plaintext; HTTP/2; session resumption |
+| TLS | **Cloudflare edge certificate** terminates public TLS; Cloudflare→`cloudflared` is encrypted by the tunnel; `cloudflared`→`atelier-gw` is HTTPS with a **Cloudflare Origin CA certificate** for `ebahn.fuhro.network` (key generated locally, SOPS/age Secret, verified via `caPool`, never `noTLSVerify`). No ACME issuer, no DNS token and no cert-manager on the tenant; manual yearly rotation (ADR-014 Amendment 1) | cert-manager DNS-01 against Azure DNS via workload identity; Front Door managed certs when used | Where TLS terminates and who can read plaintext; HTTP/2; session resumption |
 | Site-to-site | **WireGuard** as a dedicated *Atelier* peer (pod in `atelier-net` or its own netns on the Pi), `AllowedIPs` = Atelier pod/service CIDR slice **only**; fuhro LAN and internal CIDRs never advertised; Pi initiates outbound | hub VNet with WireGuard VM, spoke VNet for AKS, NSGs, UDRs; Azure Firewall only during game days (cost) | Routing tables, MTU/MSS clamping, split tunnel, why AllowedIPs is the real firewall |
 | Private access | — | Private endpoints for Key Vault, Blob, Postgres (if managed) | Why private endpoints, DNS for them |
 | Zero Trust | Default-deny `CiliumNetworkPolicy` per namespace; L7-aware policies; Cilium mTLS (WireGuard transparent encryption) for pod-to-pod | same | Identity-based vs IP-based policy; when SPIFFE/SPIRE is justified |
@@ -335,12 +335,12 @@ Error budget policy: burn-rate alerts at 14.4× (1 h) and 6× (6 h); a breached 
 
 | # | Phase | Weeks | Goal | Key deliverables | Learn | Evidences | Exit criteria |
 |---|---|---|---|---|---|---|---|
-| 0 | **Foundation, spec & open-source hygiene** | 1 | Agree spec, repos, budget and leak guardrails | SPEC.md v1.0, public repo skeleton with LICENSE/SECURITY/CONTRIBUTING, private env + brand-data repos, gitleaks + fuhro-leak CI gate, pre-commit, ADR-001/002/011/014/016, Azure budget alert at $40 | ADRs, FinOps basics, OSS hygiene, threat of public GitOps repos | DOC, LEAD, SEC | Spec approved; leak gate blocks a seeded test secret; budget alert fires in test; PR creation restricted to collaborators verified (tested after the repo goes public; GitHub Free has no branch rules on private repos, so rulesets are created right after the flip) |
+| 0 | **Foundation, spec & open-source hygiene** | 1 | Agree spec, repos, budget and leak guardrails | SPEC.md v1.0, public repo skeleton with LICENSE/SECURITY/CONTRIBUTING, private env + brand-data repos, gitleaks + fuhro-leak CI gate, pre-commit, ADR-001/002/011/014/016, Azure budget alert at $40 | ADRs, FinOps basics, OSS hygiene, threat of public GitOps repos | DOC, LEAD, SEC | Spec approved; leak gate blocks a seeded test secret; Azure: free-account spending limit confirmed, budget alert + test email deferred to the Phase 5 gate (free accounts could not exercise them); PR creation restricted to collaborators verified (tested after the repo goes public; GitHub Free has no branch rules on private repos, so rulesets are created right after the flip) |
 | 1 | **Tenant on the edge + reference `kind` cluster + GitOps** | 2 | Atelier reconciled as an isolated tenant on fuhro-network; identical stack on `kind` for anyone who clones the repo | **Week 1 hardware inventory** (RAM, NVMe HAT, free memory under current fuhro load → sets the tenant quota), fuhro GitOps convention (AppProject-per-tenant, ADR-015), `platform/kind`, `atelier-*` namespaces + quotas, AppProject + ApplicationSet (private repo), CiliumClusterwideNetworkPolicy isolation, dedicated Gateway + tunnel connector, isolation test suite (P15), MkDocs site | Multi-tenancy, AppProject boundaries, Gateway API, Cilium identity-based policy, Hubble | K8S, CICD, NET, SEC, DOC | `hello` HTTPRoute reachable with valid TLS via Git only; P15 isolation tests green on the homelab |
 | 2 | **Schema, catalog & metatags** | 2 | Products with reviewed metadata + embeddings | `libs/schema` v1 + tests, ingestion, VLM draft pipeline (ADR-003), `atelierctl catalog`, CNPG Postgres + pgvector, `catalog-api` | Data modelling, vector search, Python packaging | LANG, DOC | P1 met on real photos; API filter + similarity queries pass tests |
 | 3 | **Storefront, orders, inventory, events** | 3 | Full demo funnel on edge | Go `storefront`, Entra External ID OIDC, Redis cart, NATS JetStream (ADR-004), `order-svc`, `inventory-svc`, Stripe test checkout, read-only degradation | Go services, event-driven design, idempotency, OIDC/PKCE | LANG, K8S, SEC | P4 met on edge cluster; contract tests green |
 | 4 | **Trend intelligence & curation** | 2 | PFW trends in shared schema, curated landing page | `trend-ingest` with source allow-list + politeness, `match-svc` scoring + explanations, landing page auto-rebuild, trend snapshots | Responsible data collection, LLM-structured extraction, caching | LANG, DOC | P2, P3 met; sources audit documented |
-| 5 | **Core region on Azure + hybrid networking** | 3 | AKS via Terraform, WireGuard to homelab, private endpoints, Front Door path | Terraform modules (hub/spoke, AKS, Key Vault, Blob, identity), policy-as-code in CI, Cilium on AKS, ESO + Key Vault, WireGuard site-to-site, packet-path diagrams with Hubble evidence | Azure networking, routing/NSG/UDR, MTU, DNS across sites, workload identity | NET, IAC, HYB, SEC, CICD | Same Git commit deploys to both regions; P9 diagrams for 3 paths; spend ≤ $50 |
+| 5 | **Core region on Azure + hybrid networking** | 3 | AKS via Terraform, WireGuard to homelab, private endpoints, Front Door path | **Gate (R2): budget, action group and test email in place before any `terraform apply`.** Terraform modules (hub/spoke, AKS, Key Vault, Blob, identity), policy-as-code in CI, Cilium on AKS, ESO + Key Vault, WireGuard site-to-site, packet-path diagrams with Hubble evidence | Azure networking, routing/NSG/UDR, MTU, DNS across sites, workload identity | NET, IAC, HYB, SEC, CICD | Same Git commit deploys to both regions; P9 diagrams for 3 paths; spend ≤ $50 |
 | 6 | **Observability, SLOs, progressive delivery, hardening** | 2 | SLO dashboards, canary rollouts, supply-chain gates | OTel everywhere, Prometheus/Loki/Tempo/Grafana, burn-rate alerts + runbooks, Argo Rollouts canaries, cosign/SBOM/Trivy, Kyverno, default-deny policies, threat model, OpenCost | SLO math, canary analysis, admission control, STRIDE | OBS, SEC, CICD, DOC | P8 met; a bad deploy is auto-rolled back in a recorded demo |
 | 7 | **Black Friday game days & narrative** | 1–2 | Prove the platform; assemble the story | k6 suite, KEDA/HPA/autoscaler tuning, Chaos Mesh runs, ≥ 4 postmortems, cost report, interview narrative, final write-ups + CV bullets | Capacity planning, chaos engineering, incident communication | K8S, NET, OBS, LEAD, DOC | P6, P7, P11, P12 met |
 
@@ -357,7 +357,7 @@ Phase order guarantees demoability: after Phase 1 there is a live cluster; after
 | # | Risk | L | I | Mitigation |
 |---|---|---|---|---|
 | R1 | Pi 5 memory/I-O too tight for Cilium + ArgoCD + Postgres + NATS + monitoring | H | H | NVMe HAT; trim monitoring on edge (Prometheus agent mode, short retention); run Loki/Tempo only on core; document every trade-off (principle 4) |
-| R2 | Azure spend exceeds $50 | M | H | Scale-to-zero user pool, budget alert at $40 with auto-teardown action, Front Door/Firewall only during game days, weekly cost report |
+| R2 | Azure spend exceeds $50 | M | H | **Gate: before the first paid resource, upgrade to pay-as-you-go (removes the free-account spending limit), create `atelier-monthly-40` + `ag-atelier-budget`, and receive the test email.** Scale-to-zero user pool, budget alert at $40 with auto-teardown action, Front Door/Firewall only during game days, weekly cost report |
 | R3 | Trend-source legal/ethical issues | M | H | Allow-list with ToS/robots audit, text-only storage, politeness limits, no imagery stored, provenance on every trend |
 | R4 | VLM metadata quality poor or inconsistent | M | M | Schema-constrained outputs, colour cross-check, mandatory human review, golden test set of 10 pieces |
 | R5 | Scope creep (Backstage, mesh, Kafka…) | H | M | Out-of-scope list §4.2; anything new needs an ADR and a removed item |
@@ -400,7 +400,7 @@ Controls: Azure Budget alert at 80 % → Action Group → Function/Automation th
 - Customer data: synthetic only until go-live decision; Stripe test mode; no card data in any system; logs scrub PII fields.
 - Product photos: Giullia owns rights; EXIF location stripped on ingest.
 - Non-production regions never hold real customer data (edge is always non-production for PII).
-- Go-live checklist (future): LGPD data inventory, privacy notice, consent, retention, DPO contact, incident process; Cloudflare as a TLS-terminating processor of customer data (ADR-014 Amendment 1).
+- Go-live checklist (future): LGPD data inventory, privacy notice, consent, retention, DPO contact, incident process; Cloudflare as a TLS-terminating processor of customer data (ADR-014 Amendment 1); Origin CA certificate expiry alert in place (Phase 6).
 
 ---
 
@@ -408,22 +408,22 @@ Controls: Azure Budget alert at 80 % → Action Group → Function/Automation th
 
 | ADR | Title | Status |
 |---|---|---|
-| 001 | Monorepo with per-service directories | Proposed |
-| 002 | Two regions: homelab edge + Azure core, one GitOps repo | Proposed |
+| 001 | Monorepo with per-service directories | Accepted (Giullia, 2026-10-10) |
+| 002 | Two regions: homelab edge + Azure core, one GitOps repo | Accepted (Giullia, 2026-10-10) |
 | 003 | Anthropic Claude (tool-use, schema-constrained) for metadata drafts; local open models (bge/e5 + SigLIP) for embeddings; `stub` provider so anyone can run without a key | Accepted (Giullia, 2026-10-09) |
-| 004 | NATS JetStream over Kafka/Redpanda | Proposed |
+| 004 | NATS JetStream over Kafka/Redpanda | Accepted (Giullia, 2026-10-10) |
 | 005 | Go `html/template` + HTMX storefront | Accepted (Giullia, 2026-10-09) |
-| 006 | Cilium as CNI in both regions; Gateway API over Ingress | Proposed |
-| 007 | WireGuard VM instead of Azure VPN Gateway (cost) | Proposed |
-| 008 | Stripe hosted Checkout for PCI SAQ-A posture | Proposed |
+| 006 | Cilium as CNI in both regions; Gateway API over Ingress | Accepted (Giullia, 2026-10-10) |
+| 007 | WireGuard VM instead of Azure VPN Gateway (cost) | Accepted (Giullia, 2026-10-10) |
+| 008 | Stripe hosted Checkout for PCI SAQ-A posture | Accepted (Giullia, 2026-10-10) |
 | 009 | Cloudflare as default global edge (DNS, Tunnel, WAF, CDN); Azure Front Door only as a documented game-day experiment | Accepted (Giullia, 2026-10-09) |
-| 010 | SPIFFE/SPIRE: not adopted unless justified | Proposed |
+| 010 | SPIFFE/SPIRE: not adopted unless justified | Accepted (Giullia, 2026-10-10) |
 | 011 | Open source under Apache-2.0 with public/private repo split; Atelier as guest tenant on fuhro-network | Accepted (Giullia, 2026-10-09) |
 | 012 | Shared Pi 5 cluster with Cilium tenancy (quotas + clusterwide deny policies); dedicated node is a future upgrade path | Accepted (Giullia, 2026-10-09) |
 | 013 | Microsoft Entra External ID for customers + Entra ID for admin; no Keycloak on the homelab | Accepted (Giullia, 2026-10-09) |
-| 014 | **Separate Cloudflare Tunnel for Ebahn** (own tunnel ID, credentials and connector); no DNS automation on the shared zone; no private-network routes on the Ebahn tunnel — see §16.6. **Amendment 1:** TLS terminates at Cloudflare, no ACME on the tenant. **Amendment 2:** no PR previews on the homelab | Accepted; amendments Proposed (2026-10-09) |
-| 015 | Atelier is the **first tenant** of fuhro-network's GitOps: AppProject-per-tenant convention defined in Phase 1 and contributed back to fuhro-network (private) | Proposed |
-| 016 | Leak gate: public generic tier + private-pattern tier on every owner push/PR, redacted output; contributions closed | Proposed (2026-10-09, revised) |
+| 014 | **Separate Cloudflare Tunnel for Ebahn** (own tunnel ID, credentials and connector); no DNS automation on the shared zone; no private-network routes on the Ebahn tunnel — see §16.6. **Amendment 1:** TLS terminates at Cloudflare, Origin CA certificate on the last hop, no ACME on the tenant. **Amendment 2:** no PR previews on the homelab | Accepted, including Amendments 1 and 2 (2026-10-10) |
+| 015 | Atelier is the **first tenant** of fuhro-network's GitOps: AppProject-per-tenant convention defined in Phase 1 and contributed back to fuhro-network (private) | Accepted (Giullia, 2026-10-10) |
+| 016 | Leak gate: public generic tier + private-pattern tier on every owner push/PR, redacted output; contributions closed | Accepted (Giullia, 2026-10-10) |
 
 Template: `docs/adr/0000-template.md` (Context · Decision · Consequences · Alternatives · Pi-vs-Azure note · Interview probe).
 
@@ -442,10 +442,10 @@ Template: `docs/adr/0000-template.md` (Context · Decision · Consequences · Al
 | Q7 | Cloudflare or Azure DNS? | **Answered:** Cloudflare (C16, ADR-009) |
 | Q8 | Dedicated node or shared Pi? | **Answered:** shared Pi 5 at first (C14, ADR-012) |
 | Q9 | fuhro GitOps conventions? | **Answered:** not yet defined → Atelier defines the tenant convention (ADR-015) |
-| Q10 | fuhro CIDRs / DNS zones / hostname patterns for deny-list and leak gate? | **Open — Phase 0.** Blocks the leak gate and the clusterwide policy; kept only in the private repo |
+| Q10 | fuhro CIDRs / DNS zones / hostname patterns for deny-list and leak gate? | **Collected (2026-10-10):** `tools/collect-patterns.py` wrote the list into the private repo (`leak-patterns/`); the leak gate is live and was proven in CI. Never copied into the public repo or chat |
 | Q11 | Keycloak on fuhro? | **Answered:** no; use Entra (C15, ADR-013) |
-| Q12 | TLS on the edge | **Decided, pending approval:** Cloudflare edge certificate; no ACME or DNS token on the tenant (ADR-014 Amendment 1) |
-| Q13 | Preview hostnames | **Decided, pending approval:** no previews on the homelab; PR previews on ephemeral `kind` in CI (ADR-014 Amendment 2) |
+| Q12 | TLS on the edge | **Decided and accepted (option C):** Cloudflare edge certificate plus Cloudflare Origin CA certificate on the `cloudflared`→gateway hop; no ACME or DNS token on the tenant (ADR-014 Amendment 1) |
+| Q13 | Preview hostnames | **Decided and accepted (option 1 + local `kind`):** no previews on the homelab; PR previews on ephemeral `kind` in CI with a hardened job (no secrets, read-only token, `pull_request` only); local `kind` for click-through (ADR-014 Amendment 2) |
 | Q14 | Leak gate vs fork PRs | **Dissolved:** contributions are closed, so there are no fork PRs; ADR-016 simplified (no label gating, no `pull_request_target`) |
 
 ---
@@ -519,7 +519,7 @@ Ebahn gets its **own Cloudflare Tunnel**, created and operated independently fro
 | Connector egress policy | `CiliumNetworkPolicy`: egress only to Cloudflare edge (TCP 443 / UDP 7844) and to `atelier-gw`; **deny** everything else — it cannot talk to any fuhro namespace, LAN CIDR or kube-apiserver. |
 | fuhro side | fuhro's tunnel has **no** public-hostname route pointing at any `atelier-*` service; the clusterwide policy denies fuhro's connector → `tenant=atelier` as well. |
 | Account boundary | Same Cloudflare account for now (shared zone). When a brand domain is bought, move Ebahn to its **own Cloudflare account** so even the zone is separate; the tunnel design above does not change. |
-| Previews | None. No per-PR hostnames and no preview namespaces on the homelab; PR previews run on ephemeral `kind` in CI (ADR-014 Amendment 2). |
+| Previews | None. No per-PR hostnames and no preview namespaces on the homelab; PR previews run on ephemeral `kind` in CI with no secrets, `contents: read`, `pull_request` only and no published ports; click-through is local `kind` (ADR-014 Amendment 2). |
 | Evidence | External scan of `ebahn.fuhro.network` while "closed" returns Cloudflare 530/1033; Hubble shows connector flows only to Cloudflare edge and `atelier-gw`; `cloudflared tunnel route ip list` is empty for the Ebahn tunnel. |
 
 ---
@@ -545,3 +545,8 @@ Ebahn gets its **own Cloudflare Tunnel**, created and operated independently fro
 | 2026-10-09 | 0.6 | Q12–Q14 decided (proposed): ADR-014 Amendments 1–2 (TLS at Cloudflare; no PR previews on the homelab), ADR-016 (three-tier leak gate). Added `leak-patterns/` and `tools/collect-patterns.py` to the private repo layout; ADR template and ADR files written. |
 | 2026-10-09 | 0.7 | Contributions closed (only the owner opens PRs): PR creation restricted to collaborators, Actions approval for external contributors, no `pull_request_target`. ADR-016 simplified; Q14 dissolved; R12, P13, §16.3–16.4, branch protection and Phase 0 exit criteria updated. |
 | 2026-10-09 | 0.8 | Phase 0 artefacts: `docs/runbooks/phase-0-walkthrough.md`, `tools/leakcheck/` (fail-closed, redacted, tested), `leak-gate` workflow, pre-commit config, starter files, ADRs 0001/0002/0011. Deviation from §16.3: trufflehog deferred to Phase 6 together with SHA-pinning of third-party Actions (only gitleaks in Phase 0). Collector zone suggestion now matches subdomains only (`[A-Za-z0-9-]+\.zone`). |
+| 2026-10-10 | 0.9 | Q12 revised: option C chosen. ADR-014 Amendment 1 now uses a Cloudflare Origin CA certificate on the `cloudflared`→gateway hop (locally generated key, SOPS/age Secret, `caPool` verification) instead of plain HTTP. Workflow runners pinned to `ubuntu-24.04`. |
+| 2026-10-10 | 0.10 | Q13 decided by owner (rule: no new attack surface): PR previews on ephemeral `kind` in GitHub Actions plus local `kind` as a complement. ADR-014 Amendment 2 now lists the preview job hardening conditions (no secrets, read-only token, `pull_request` only, nothing published, synthetic artifacts, SHA-pinned Actions in Phase 6) and defers shareable previews to a future ADR. |
+| 2026-10-10 | 0.11 | ADR-014 and its Amendments 1–2 accepted by the owner; Q12 and Q13 closed. ADR-016 remains Proposed. |
+| 2026-10-10 | 0.12 | All ADRs (001–016) accepted by the owner. Q10 closed: pattern list collected into the private repo, leak gate live and proven in CI (canary test). Only Q3 (Pi inventory) remains open before v1.0. |
+| 2026-10-10 | 0.13 | Phase 0 complete: public repo live with signed commits and rulesets, leak gate proven locally and in CI (canary), stranger test passed, ADRs accepted, write-up at `docs/writeups/phase-0.md`. Deviation: the Azure budget/test-email criterion could not be exercised on a free account; the free-account spending limit is the brake for now, and budget + action group + test email become a hard gate (R2) before the first paid resource in Phase 5. |

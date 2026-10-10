@@ -1,6 +1,6 @@
 # ADR-0001: One public monorepo with per-service directories
 
-- **Status:** Proposed
+- **Status:** Accepted (Giullia, 2026-10-10)
 - **Date:** 2026-10-09
 - **Deciders:** Giullia Lazaro
 - **Requirement codes:** CICD, DOC

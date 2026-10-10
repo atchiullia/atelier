@@ -1,6 +1,6 @@
 # ADR-0002: Two regions, one GitOps flow: homelab edge and Azure core
 
-- **Status:** Proposed
+- **Status:** Accepted (Giullia, 2026-10-10)
 - **Date:** 2026-10-09
 - **Deciders:** Giullia Lazaro
 - **Requirement codes:** K8S, NET, HYB, CICD

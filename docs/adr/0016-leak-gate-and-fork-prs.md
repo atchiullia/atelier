@@ -1,6 +1,6 @@
 # ADR-0016: Leak gate design
 
-- **Status:** Proposed (revised 2026-10-09: contributions closed)
+- **Status:** Accepted (Giullia, 2026-10-10) (revised 2026-10-09: contributions closed)
 - **Date:** 2026-10-09
 - **Deciders:** Giullia Lazaro
 - **Requirement codes:** SEC, CICD, DOC

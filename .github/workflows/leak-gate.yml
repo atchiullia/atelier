@@ -1,0 +1,57 @@
+name: leak-gate
+
+# ADR-0016. Only trusted triggers. Never add pull_request_target here.
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 1"      # weekly full-history scan, Monday 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # TODO(spec): pin third-party actions by commit SHA in Phase 6 (supply chain).
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+
+  leakcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Unit tests for the gate itself
+        run: python3 -m unittest discover -s tools/leakcheck
+
+      - name: Tier 1, public checks (no secrets)
+        run: python3 tools/leakcheck/leakcheck.py
+
+      - name: Fetch private patterns
+        uses: actions/checkout@v4
+        with:
+          repository: atchiullia/atelier-env-fuhro
+          token: ${{ secrets.PATTERNS_TOKEN }}
+          path: .private
+          sparse-checkout: leak-patterns
+          persist-credentials: false
+
+      - name: Tier 2, private patterns (output is redacted)
+        run: python3 tools/leakcheck/leakcheck.py --patterns .private/leak-patterns --require-patterns
+
+      - name: History scan (weekly and manual runs)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: python3 tools/leakcheck/leakcheck.py --patterns .private/leak-patterns --require-patterns --history

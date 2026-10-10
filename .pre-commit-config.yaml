@@ -1,0 +1,17 @@
+# Install once:  pre-commit install
+# Then pin to current releases:  pre-commit autoupdate
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0          # run `pre-commit autoupdate` after copying this file
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: leakcheck
+        name: leakcheck (homelab details)
+        # Tier 1 always. Tier 2 too when $ATELIER_LEAK_PATTERNS points at the private patterns.
+        entry: python3 tools/leakcheck/leakcheck.py --staged
+        language: system
+        pass_filenames: false
+        always_run: true
